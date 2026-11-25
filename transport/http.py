@@ -30,7 +30,8 @@ class HttpTransport:
     # cookie bridging
     def inject_cookies(self, cookies: dict):
         for k, v in cookies.items():
-            self._s.cookies.set(k, v)
+            val = v["value"] if isinstance(v, dict) else v
+            self._s.cookies.set(k, val)
 
     def cookies(self) -> dict:
         return {c.name: c.value for c in self._s.cookies.jar}
