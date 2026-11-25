@@ -1,29 +1,44 @@
 INIT_JS = r"""
 Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => undefined });
-Object.defineProperty(Navigator.prototype, 'plugins', { get: () => [1,2,3,4,5] });
-Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['en-US','en'] });
+Object.defineProperty(Navigator.prototype, 'plugins', {
+  get: () => {
+    const specs = [
+      ['PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+      ['Chrome PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+      ['Chromium PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+      ['Microsoft Edge PDF Viewer', 'internal-pdf-viewer', 'Portable Document Format'],
+      ['WebKit built-in PDF', 'internal-pdf-viewer', 'Portable Document Format'],
+    ];
+    const plugins = specs.map(([name, filename, description]) => {
+      const p = Object.create(Plugin.prototype);
+      Object.defineProperties(p, {
+        name: { value: name, enumerable: true },
+        filename: { value: filename, enumerable: true },
+        description: { value: description, enumerable: true },
+        length: { value: 0, enumerable: true },
+      });
+      return p;
+    });
+    plugins.item = (i) => plugins[i] || null;
+    plugins.namedItem = (n) => plugins.find((p) => p.name === n) || null;
+    return plugins;
+  },
+});
+Object.defineProperty(Navigator.prototype, 'languages', { get: () => ['en-US', 'en'] });
 window.chrome = window.chrome || { runtime: {} };
 const _q = navigator.permissions.query.bind(navigator.permissions);
 navigator.permissions.query = (p) =>
   p.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : _q(p);
-const _get = WebGLRenderingContext.prototype.getParameter;
-WebGLRenderingContext.prototype.getParameter = function (p) {
-  if (p === 37445) return 'Intel Inc.';
-  if (p === 37446) return 'Intel Iris OpenGL Engine';
-  return _get.call(this, p);
-};
-"""
 
-HUMAN_MOUSE_JS = r"""
-async ([x, y]) => {
-  const steps = 12 + Math.floor(Math.random() * 10);
-  for (let i = 0; i < steps; i++) {
-    const t = i / steps;
-    const nx = x * t + (Math.random() - 0.5) * 6;
-    const ny = y * t + (Math.random() - 0.5) * 6;
-    document.elementFromPoint(nx, ny)?.dispatchEvent(
-      new MouseEvent('mousemove', { clientX: nx, clientY: ny, bubbles: true }));
-    await new Promise(r => setTimeout(r, 12 + Math.random() * 30));
-  }
-}
+const _patchWebGL = (proto) => {
+  if (!proto || !proto.getParameter) return;
+  const _get = proto.getParameter;
+  proto.getParameter = function (p) {
+    if (p === 37445) return 'Intel Inc.';
+    if (p === 37446) return 'Intel Iris OpenGL Engine';
+    return _get.call(this, p);
+  };
+};
+_patchWebGL(typeof WebGLRenderingContext !== 'undefined' ? WebGLRenderingContext.prototype : null);
+_patchWebGL(typeof WebGL2RenderingContext !== 'undefined' ? WebGL2RenderingContext.prototype : null);
 """

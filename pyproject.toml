@@ -6,20 +6,16 @@ build-backend = "setuptools.build_meta"
 name = "bypasskit"
 version = "0.1.0"
 description = "HTTP and browser transport library with policy-driven escalation and challenge handling"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
-    "curl_cffi",
-    "playwright",
+    "curl_cffi>=0.7.0",
+    "playwright>=1.40.0",
 ]
 
-[tool.setuptools]
-packages = [
-    "bypasskit",
-    "bypasskit.challenge",
-    "bypasskit.fingerprint",
-    "bypasskit.proxy",
-    "bypasskit.transport",
-]
+[tool.setuptools.packages.find]
+where = ["src"]
 
-[tool.setuptools.package-dir]
-bypasskit = "."
+[tool.setuptools.package-data]
+bypasskit = ["py.typed"]

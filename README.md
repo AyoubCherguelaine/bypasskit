@@ -20,7 +20,7 @@ pip install -e .
 If you use the `"browser"` transport, ensure Playwright browsers are installed:
 
 ```bash
-playwright install
+playwright install chrome chromium
 ```
 
 ## Quick Start
@@ -126,7 +126,7 @@ Session(
 ```
 
 - `session.fetch(url, method="GET", *, headers=None, data=None, json=None) -> Response`
-  Returns a `Response(status, headers, body, url, elapsed, transport)` or raises `ChallengeUnresolved` if all attempts fail.
+  Returns a `Response(status, headers, body, url, elapsed, transport, challenge=Challenge.NONE)` or raises `ChallengeUnresolved` (or `BlockedError` if all configured proxies are exhausted).
 - `session.close()` (or use `with Session(...) as s:`): Closes all open HTTP and browser transports.
 
 ### Tests
@@ -152,13 +152,13 @@ python -m unittest discover -s tests -v
   - `TransportError`
   - `BlockedError`
   - `ChallengeUnresolved`
-  - `BudgetExceeded`
 
 ## Project Structure
 
 ```text
-bypasskit/
+src/bypasskit/
 ├── __init__.py          # Public exports (Session, DomainPolicy, PolicyMap, solvers, errors, get)
+├── py.typed             # PEP 561 type marker
 ├── session.py           # Session orchestration, warm-up, escalation, and profile rotation
 ├── policies.py          # DomainPolicy and PolicyMap
 ├── solvers.py           # Solver, ManualSolver, TurnstileSolver
@@ -167,14 +167,18 @@ bypasskit/
 ├── state.py             # StateStore for per-domain profiles, cookies, and browser dirs
 ├── errors.py            # Exception hierarchy
 ├── challenge/
+│   ├── __init__.py
 │   └── detect.py        # Challenge enum and response detector
 ├── fingerprint/
+│   ├── __init__.py
 │   └── profiles.py      # Browser profiles and ordered header generation
 ├── proxy/
+│   ├── __init__.py
 │   └── pool.py          # Weighted ProxyPool with sticky context support
 └── transport/
+    ├── __init__.py
     ├── base.py          # Response dataclass
     ├── http.py          # HttpTransport (curl_cffi)
     ├── browser.py       # BrowserTransport (playwright)
-    └── stealth.py       # Browser init and mouse movement scripts
+    └── stealth.py       # Browser init scripts
 ```

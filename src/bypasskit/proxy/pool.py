@@ -1,15 +1,21 @@
 import random
 from contextlib import contextmanager
+from ..errors import BlockedError
+
 
 class ProxyPool:
     def __init__(self, proxies: list[str] | None = None):
-        self._score = {p: 1.0 for p in (proxies or [])}
+        items = proxies or []
+        self._configured = bool(items)
+        self._score = {p: 1.0 for p in items}
 
     def __bool__(self):
         return bool(self._score)
 
     def pick(self) -> str | None:
         if not self._score:
+            if self._configured:
+                raise BlockedError("All proxies exhausted")
             return None
         items = list(self._score.items())
         total = sum(s for _, s in items)

@@ -4,6 +4,7 @@ from ..errors import TransportError
 from ..fingerprint.profiles import headers_for
 from .base import Response
 
+
 class HttpTransport:
     name = "http"
 
@@ -35,6 +36,15 @@ class HttpTransport:
 
     def cookies(self) -> dict:
         return {c.name: c.value for c in self._s.cookies.jar}
+
+    def export_cookies(self) -> dict[str, dict]:
+        out = {}
+        for c in self._s.cookies.jar:
+            entry: dict = {"value": c.value}
+            if c.expires:
+                entry["exp"] = float(c.expires)
+            out[c.name] = entry
+        return out
 
     def close(self):
         self._s.close()

@@ -1,5 +1,4 @@
 import random
-import time
 from urllib.parse import urlsplit
 from .challenge.detect import detect, Challenge
 from .cooldown import Cooldown
@@ -31,6 +30,7 @@ class Session:
         self.rotate_after = rotate_after
         self._headless = headless
         self._hosts: dict[str, dict] = {}   # per-host runtime
+        self._last: dict[str, str] = {}
 
     def _rt(self, host):
         if host not in self._hosts:
@@ -65,12 +65,16 @@ class Session:
         return rt["browser"]
 
     def _harvest(self, rt, host, tr):
-        cookies = tr.cookies()
-        self.state.update(host, cookies=self._dump(cookies))
+        raw = tr.export_cookies() if hasattr(tr, "export_cookies") else tr.cookies()
+        self.state.update(host, cookies=self._dump(raw))
+        flat = {
+            k: (v["value"] if isinstance(v, dict) else v)
+            for k, v in raw.items()
+        }
         if tr is rt["browser"] and rt["http"]:
-            rt["http"].inject_cookies(cookies)
+            rt["http"].inject_cookies(flat)
         elif tr is rt["http"] and rt["browser"]:
-            rt["browser"].inject_cookies(cookies, domain=host)
+            rt["browser"].inject_cookies(flat, domain=host)
 
     def fetch(self, url, method="GET", *, headers=None, data=None, json=None):
         host = urlsplit(url).hostname or ""
@@ -78,6 +82,7 @@ class Session:
         rt = self._rt(host)
         ladder = list(pol.ladder)
         level = 0
+        max_level_rotations = 0
         warmed = bool(self.state.cookies(host))
 
         for _ in range(pol.max_attempts):
@@ -88,23 +93,29 @@ class Session:
 
             try:
                 if not warmed:
-                    tr.send(f"https://{host}/", proxy=rt["proxy"])
+                    warm_resp = tr.send(f"https://{host}/", proxy=rt["proxy"])
                     warmed = True
+                    if warm_resp.status < 400:
+                        self._last[host] = warm_resp.url
                 resp = tr.send(
-                    url, method, headers=headers, data=data, json=json, proxy=rt["proxy"]
+                    url, method, headers=headers, data=data, json=json,
+                    referer=self._last.get(host), proxy=rt["proxy"],
                 )
             except Exception:
                 self.proxies.report(rt["proxy"], ok=False)
                 if pol.rotate_on_block:
                     rt["proxy"] = self.proxies.pick()
-                self.cooldown.blocked(host, 1)
+                self.cooldown.failed(host)
                 continue
 
             ch = detect(resp.status, resp.headers, resp.body, resp.url)
-            if ch == Challenge.NONE:
+            if ch in (Challenge.NONE, Challenge.RECAPTCHA):
                 self.proxies.report(rt["proxy"], ok=True)
                 rt["strikes"] = 0
                 self._harvest(rt, host, tr)
+                if resp.status < 400:
+                    self._last[host] = resp.url
+                resp.challenge = ch
                 return resp
 
             if ch == Challenge.RATE_LIMIT:
@@ -131,6 +142,8 @@ class Session:
                 rt["name"] = rt["profile"].name
                 rt["proxy"] = self.proxies.pick()
                 self.state.update(host, profile=rt["name"], cookies={})
+                self._last.pop(host, None)
+                warmed = False
                 rt["strikes"] = 0
                 if rt["http"]:
                     rt["http"].close()
@@ -138,14 +151,28 @@ class Session:
                 if rt["browser"]:
                     rt["browser"].close()
                     rt["browser"] = None
-                level = 0
+                if level >= len(ladder) - 1:
+                    max_level_rotations += 1
+                if max_level_rotations >= 2:
+                    level = 0
+                    max_level_rotations = 0
+                else:
+                    level = min(level, len(ladder) - 1)
 
         raise ChallengeUnresolved(f"{host}: unresolved, cooling down")
 
     @staticmethod
     def _dump(cookies: dict) -> dict:
-        exp = time.time() + 3600
-        return {k: {"value": v, "exp": exp} for k, v in cookies.items()}
+        out = {}
+        for k, v in cookies.items():
+            if isinstance(v, dict):
+                entry = {"value": v["value"]}
+                if v.get("exp") is not None:
+                    entry["exp"] = v["exp"]
+                out[k] = entry
+            else:
+                out[k] = {"value": v}
+        return out
 
     def close(self):
         for rt in self._hosts.values():
