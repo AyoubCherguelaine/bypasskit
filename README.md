@@ -127,6 +127,7 @@ Session(
 
 - `session.fetch(url, method="GET", *, headers=None, data=None, json=None) -> Response`
   Returns a `Response(status, headers, body, url, elapsed, transport, challenge=Challenge.NONE)` or raises `ChallengeUnresolved` (or `BlockedError` if all configured proxies are exhausted).
+  `Challenge.RECAPTCHA` on a `200` response means you have the page, but the payload may be an interstitial — branch on `resp.challenge`.
 - `session.close()` (or use `with Session(...) as s:`): Closes all open HTTP and browser transports.
 
 ### Tests

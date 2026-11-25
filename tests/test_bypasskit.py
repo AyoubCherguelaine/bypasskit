@@ -140,6 +140,23 @@ class TestBrowserTransport(unittest.TestCase):
         self.assertEqual(arg["body"], "a=1&b=2")
         self.assertEqual(arg["headers"]["Content-Type"], "application/x-www-form-urlencoded")
 
+    def test_get_with_headers_uses_goto_and_clears_extra_headers(self):
+        tr = BrowserTransport(CHROME, "/tmp/unused")
+        tr._page = MagicMock(url="https://x.com/")
+        tr._page.goto.return_value = MagicMock(status=200, headers={"content-type": "text/html"})
+        tr._page.content.return_value = "<html>ok</html>"
+        tr._ctx = MagicMock()
+
+        resp = tr.send("https://x.com/page", headers={"X-Test": "1"})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.body, "<html>ok</html>")
+        tr._page.goto.assert_called_once()
+        tr._page.evaluate.assert_not_called()
+        self.assertEqual(
+            [c.args[0] for c in tr._page.set_extra_http_headers.call_args_list],
+            [{"X-Test": "1"}, {}],
+        )
+
     def test_close_stops_pw_even_if_ctx_close_raises(self):
         tr = BrowserTransport(CHROME, "/tmp/unused")
         ctx = MagicMock()
@@ -241,14 +258,44 @@ class TestSession(unittest.TestCase):
             pol = PolicyMap()
             pol.set("example.com", DomainPolicy(ladder=("http",), max_attempts=2, min_delay=0.0, max_delay=0.0))
 
-            http_tr = _FakeTransport("http", [RuntimeError("boom"), RuntimeError("boom")])
+            http_tr = _FakeTransport(
+                "http",
+                [RuntimeError("warm-boom"), RuntimeError("boom-1"), RuntimeError("boom-2")],
+            )
 
             with patch("bypasskit.session.HttpTransport", return_value=http_tr), \
                  patch("bypasskit.cooldown.time.sleep"):
                 with Session(policies=pol, state=tmp) as s:
                     with self.assertRaises(ChallengeUnresolved):
                         s.fetch("https://example.com/p")
-            self.assertEqual(len(http_tr.calls), 2)
+            self.assertEqual(len(http_tr.calls), 3)
+            self.assertEqual([c[0] for c in http_tr.calls], [
+                "https://example.com/",
+                "https://example.com/p",
+                "https://example.com/p",
+            ])
+
+    def test_rotated_proxy_closes_running_browser(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pol = PolicyMap()
+            pol.set("example.com", DomainPolicy(ladder=("browser",), max_attempts=2, min_delay=0.0, max_delay=0.0))
+
+            b1 = _FakeTransport("browser", [
+                Response(200, {}, "home", "https://example.com/", 0.1, "browser"),
+                Response(429, {}, "rate limited", "https://example.com/p", 0.1, "browser"),
+            ])
+            b2 = _FakeTransport("browser", [
+                Response(200, {}, "ok", "https://example.com/p", 0.1, "browser"),
+            ])
+
+            with patch("bypasskit.session.BrowserTransport", side_effect=[b1, b2]), \
+                 patch("bypasskit.cooldown.time.sleep"), \
+                 patch("bypasskit.proxy.pool.ProxyPool.pick", side_effect=["http://p1:8080", "http://p2:8080"]):
+                with Session(policies=pol, state=tmp, proxies=["http://p1:8080", "http://p2:8080"]) as s:
+                    resp = s.fetch("https://example.com/p")
+                    self.assertEqual(resp.status, 200)
+                    self.assertTrue(b1.closed)
+                    self.assertEqual(b2.calls[0][3], "http://p2:8080")
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ class Session:
         self._hosts: dict[str, dict] = {}   # per-host runtime
         self._last: dict[str, str] = {}
 
-    def _rt(self, host):
+    def _rt(self, host, pol):
         if host not in self._hosts:
             stored = self.state.load(host)
             name = stored.get("profile")
@@ -45,9 +45,28 @@ class Session:
                 "http": None,
                 "browser": None,
                 "proxy": self.proxies.pick(),
+                "warmed": False,
             }
             self.state.update(host, profile=name)
-        return self._hosts[host]
+        rt = self._hosts[host]
+        if not self.state.cookies(host) and not rt.get("warmed"):
+            rt["warmed"] = True
+            try:
+                r = self._transport(rt, host, pol.ladder[0], pol.timeout).send(
+                    f"https://{host}/", proxy=rt["proxy"]
+                )
+                if r.status < 400:
+                    self._last[host] = r.url
+            except Exception:
+                pass
+        return rt
+
+    def _rotate_proxy(self, rt):
+        new = self.proxies.pick()
+        if new != rt["proxy"] and rt["browser"]:
+            rt["browser"].close()
+            rt["browser"] = None
+        rt["proxy"] = new
 
     def _transport(self, rt, host, kind, timeout):
         if kind == "http":
@@ -79,11 +98,10 @@ class Session:
     def fetch(self, url, method="GET", *, headers=None, data=None, json=None):
         host = urlsplit(url).hostname or ""
         pol = self.policies.for_domain(host)
-        rt = self._rt(host)
+        rt = self._rt(host, pol)
         ladder = list(pol.ladder)
         level = 0
         max_level_rotations = 0
-        warmed = bool(self.state.cookies(host))
 
         for _ in range(pol.max_attempts):
             self.cooldown.wait(host)
@@ -92,11 +110,6 @@ class Session:
             tr = self._transport(rt, host, kind, pol.timeout)
 
             try:
-                if not warmed:
-                    warm_resp = tr.send(f"https://{host}/", proxy=rt["proxy"])
-                    warmed = True
-                    if warm_resp.status < 400:
-                        self._last[host] = warm_resp.url
                 resp = tr.send(
                     url, method, headers=headers, data=data, json=json,
                     referer=self._last.get(host), proxy=rt["proxy"],
@@ -104,7 +117,7 @@ class Session:
             except Exception:
                 self.proxies.report(rt["proxy"], ok=False)
                 if pol.rotate_on_block:
-                    rt["proxy"] = self.proxies.pick()
+                    self._rotate_proxy(rt)
                 self.cooldown.failed(host)
                 continue
 
@@ -122,7 +135,7 @@ class Session:
                 rt["strikes"] += 1
                 self.proxies.report(rt["proxy"], ok=False)
                 if pol.rotate_on_block:
-                    rt["proxy"] = self.proxies.pick()
+                    self._rotate_proxy(rt)
                 self.cooldown.blocked(host, rt["strikes"])
                 continue
 
@@ -138,12 +151,13 @@ class Session:
             self.proxies.report(rt["proxy"], ok=False)
             self.cooldown.blocked(host, rt["strikes"])
             if pol.rotate_on_block and rt["strikes"] >= self.rotate_after:
+                new_proxy = self.proxies.pick()
                 rt["profile"] = random.choice(list(_PROFILES.values()))
                 rt["name"] = rt["profile"].name
-                rt["proxy"] = self.proxies.pick()
+                rt["proxy"] = new_proxy
                 self.state.update(host, profile=rt["name"], cookies={})
                 self._last.pop(host, None)
-                warmed = False
+                rt["warmed"] = False
                 rt["strikes"] = 0
                 if rt["http"]:
                     rt["http"].close()

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import tempfile
 import time
 
 
@@ -25,9 +26,9 @@ class StateStore:
         d = self.load(domain)
         d.update(kw)
         path = self._path(domain)
-        tmp = f"{path}.{os.getpid()}.tmp"
+        fd, tmp = tempfile.mkstemp(dir=self.root, suffix=".tmp")
         try:
-            with open(tmp, "w") as f:
+            with os.fdopen(fd, "w") as f:
                 json.dump(d, f)
                 f.flush()
                 os.fsync(f.fileno())

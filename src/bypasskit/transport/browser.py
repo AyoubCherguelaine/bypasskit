@@ -101,13 +101,19 @@ class BrowserTransport:
         self._ensure(proxy)
         t0 = time.monotonic()
         try:
-            if method.upper() == "GET" and data is None and json is None and not headers:
-                r = self._page.goto(
-                    url,
-                    wait_until="domcontentloaded",
-                    referer=referer,
-                    timeout=self.timeout * 1000,
-                )
+            if method.upper() == "GET" and data is None and json is None:
+                if headers:
+                    self._page.set_extra_http_headers(headers)
+                try:
+                    r = self._page.goto(
+                        url,
+                        wait_until="domcontentloaded",
+                        referer=referer,
+                        timeout=self.timeout * 1000,
+                    )
+                finally:
+                    if headers:
+                        self._page.set_extra_http_headers({})
                 try:
                     self._page.mouse.move(
                         random.randint(100, 900),
@@ -141,6 +147,15 @@ class BrowserTransport:
                     req_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
                 else:
                     payload = data
+
+            if not self._same_origin(url):
+                tgt = urlsplit(url)
+                if tgt.scheme in ("http", "https") and tgt.netloc:
+                    self._page.goto(
+                        f"{tgt.scheme}://{tgt.netloc}/",
+                        wait_until="domcontentloaded",
+                        timeout=self.timeout * 1000,
+                    )
 
             if self._same_origin(url):
                 res = self._page.evaluate(
